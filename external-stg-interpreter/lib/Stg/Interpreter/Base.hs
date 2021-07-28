@@ -1,10 +1,10 @@
-{-# LANGUAGE RecordWildCards, LambdaCase, OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards, LambdaCase, OverloadedStrings, ExistentialQuantification #-}
 module Stg.Interpreter.Base where
 
 import Data.Word
 import Foreign.Ptr
 import Control.Monad.State.Strict
-import Data.List (foldl')
+import Data.List (foldl', intercalate)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Map (Map)
@@ -218,6 +218,33 @@ type Heap   = IntMap HeapObject
 type Env    = Map Id Atom   -- NOTE: must contain only the defined local variables
 type Stack  = [StackContinuation]
 
+data DS = forall a. Show a => DS !a
+instance Show DS where
+  show (DS x) = show x
+
+class Record a where
+  asRow :: a -> [String]
+
+tsv :: Record a => a -> String
+tsv = intercalate "\t" . asRow
+
+data DynTraceEntry = DTE
+  { dteTimestamp :: !Int
+  , dteThreadId  :: !Int
+  , dteFunction  :: !(Maybe Id)
+  , dteArgument  :: !(Maybe String)
+  , dteClosure   :: !(Maybe String)
+  } deriving (Eq, Ord, Show)
+
+instance Record DynTraceEntry where
+  asRow DTE{..} = show <$>
+    [ DS dteTimestamp
+    , DS dteThreadId
+    , DS dteFunction
+    , DS dteArgument
+    , DS dteClosure
+    ]
+
 data StgState
   = StgState
   { ssHeap                :: !Heap
@@ -289,6 +316,7 @@ data StgState
   , ssHeapStartAddress    :: !Int
   , ssClosureCallCounter  :: !Int
   , ssCallGraph           :: !(StrictMap.Map (Maybe Id, Id) Int)
+  , ssDynTrace            :: ![DynTraceEntry]
 
   -- debugger API
   , ssDebuggerChan        :: DebuggerChan
@@ -400,6 +428,7 @@ emptyStgState stateStore dl dbgChan nextDbgCmd dbgState tracingState gcIn gcOut 
   , ssHeapStartAddress    = 0
   , ssClosureCallCounter  = 0
   , ssCallGraph           = mempty
+  , ssDynTrace            = mempty
 
   -- debugger api
   , ssDebuggerChan        = dbgChan
@@ -693,6 +722,7 @@ lookupByteArrayDescriptorI :: HasCallStack => ByteArrayIdx -> M ByteArrayDescrip
 lookupByteArrayDescriptorI = lookupByteArrayDescriptor . baId
 
 {-# NOINLINE liftIOAndBorrowStgState #-}
+{-# LANGUAGE ExistentialQuantification #-}
 liftIOAndBorrowStgState :: HasCallStack => IO a -> M a
 liftIOAndBorrowStgState action = do
   stateStore <- gets $ unPrintableMVar . ssStateStore

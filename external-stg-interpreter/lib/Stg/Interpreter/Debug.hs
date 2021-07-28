@@ -11,6 +11,8 @@ import System.IO
 
 import Control.Monad.State.Strict
 
+import Data.Foldable (traverse_)
+
 import Stg.Syntax
 import Stg.Interpreter.Base
 
@@ -132,3 +134,12 @@ exportCallGraph = do
         let fromS = maybe "<global>" show from
             toS   = show to
         hPutStrLn h $ fromS ++ "\t" ++ toS ++ "\t" ++ show count
+
+-- TODO: should really be called from all the places exportCallGraph is
+exportDynTrace :: M ()
+exportDynTrace = do
+  Rts { rtsProgName = progName } <- gets ssRtsSupport
+  trace <- gets ssDynTrace
+  liftIO $ do
+    withFile (progName ++ "-dyn-trace.tsv") WriteMode $ \h -> do
+      traverse_ (hPutStrLn h . tsv) $ reverse trace

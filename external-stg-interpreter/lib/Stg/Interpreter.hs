@@ -23,6 +23,7 @@ import qualified Data.Set as Set
 import qualified Data.IntMap as IntMap
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Internal as BS
+import Data.Time.Clock.System (getSystemTime, SystemTime(MkSystemTime, systemNanoseconds))
 import System.Posix.DynamicLinker
 
 import System.FilePath
@@ -152,6 +153,18 @@ builtinStgEval a@HeapPtr{} = do
         addCallGraphEdge currentClosure hoName
 
         modify' $ \s -> s {ssCurrentClosure = Just hoName, ssCurrentClosureEnv = extendedEnv, ssCurrentClosureAddr = l}
+
+        -- HACK HERE
+        MkSystemTime {systemNanoseconds = time} <- liftIO getSystemTime
+        let newEntry StgState{..} = DTE
+              { dteTimestamp = fromIntegral time
+              , dteThreadId  = ssCurrentThreadId
+              , dteFunction  = pure hoName
+              , dteArgument  = Nothing
+              , dteClosure   = Nothing
+              }
+        modify' $ \s@StgState{..} -> s {ssDynTrace = newEntry s : ssDynTrace}
+
         Debugger.checkBreakpoint hoName
         Debugger.checkRegion hoName
         GC.checkGC [a] -- HINT: add local env as GC root
@@ -614,6 +627,7 @@ runProgram switchCWD progFilePath mods0 progArgs dbgChan dbgState tracing = do
         -- TODO: do everything that 'hs_exit_' does
 
         exportCallGraph
+        exportDynTrace
 
         -- HINT: start debugger REPL in debug mode
         when (dbgState == DbgStepByStep) $ do
