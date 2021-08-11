@@ -11,6 +11,7 @@ import System.IO
 
 import Control.Monad.State.Strict
 
+import Data.List (intercalate)
 import Data.Foldable (traverse_)
 
 import Stg.Syntax
@@ -135,6 +136,10 @@ exportCallGraph = do
             toS   = show to
         hPutStrLn h $ fromS ++ "\t" ++ toS ++ "\t" ++ show count
 
+deleteAt :: Int -> [a] -> [a]
+deleteAt n xs = init pre ++ suf where
+  (pre, suf) = splitAt n xs
+
 -- TODO: should really be called from all the places exportCallGraph is
 exportDynTrace :: M ()
 exportDynTrace = do
@@ -142,4 +147,14 @@ exportDynTrace = do
   trace <- gets ssDynTrace
   liftIO $ do
     withFile (progName ++ "-dyn-trace.tsv") WriteMode $ \h -> do
+      hPutStrLn h $ intercalate "\t"
+        [ "timestamp"
+        , "thread id"
+        , "function"
+        , "type"
+        , "num args"
+        , "arg diff"
+        , "src address"
+        , "dst address"
+        ]
       traverse_ (hPutStrLn h . tsv) $ reverse trace

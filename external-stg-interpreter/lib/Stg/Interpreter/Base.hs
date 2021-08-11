@@ -5,6 +5,7 @@ import Data.Word
 import Foreign.Ptr
 import Control.Monad.State.Strict
 import Data.List (foldl', intercalate)
+import Data.Maybe (fromJust)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Map (Map)
@@ -22,6 +23,7 @@ import Data.Vector (Vector)
 import qualified Data.Primitive.ByteArray as BA
 import Control.Monad.Primitive
 import System.Posix.DynamicLinker
+import Data.Time.Clock.System (getSystemTime, SystemTime(MkSystemTime, systemNanoseconds))
 import Control.Concurrent.MVar
 import Control.Concurrent.Chan.Unagi.Bounded
 import Foreign.ForeignPtr.Unsafe
@@ -155,6 +157,7 @@ data StackContinuation
   | RestoreExMask !Bool !Bool             -- saved: block async exceptions, interruptible
   | RunScheduler  !ScheduleReason
   | DataToTagOp
+  | ClosureExitMarker
   deriving (Show, Eq, Ord)
 
 data ScheduleReason
@@ -228,22 +231,54 @@ class Record a where
 tsv :: Record a => a -> String
 tsv = intercalate "\t" . asRow
 
-data DynTraceEntry = DTE
+data DynTraceEntry
+  = DTEEntry
   { dteTimestamp :: !Int
   , dteThreadId  :: !Int
-  , dteFunction  :: !(Maybe Id)
-  , dteArgument  :: !(Maybe String)
-  , dteClosure   :: !(Maybe String)
-  } deriving (Eq, Ord, Show)
+  , dteFunction  :: !Id
+  }
+  | DTEDiff
+  { dteTimestamp :: !Int
+  , dteThreadId  :: !Int
+  , dteFunction  :: !Id
+  , dteDiff      :: ![String]
+  }
+  | DTEUpdate
+  { dteTimestamp :: !Int
+  , dteThreadId  :: !Int
+  , dteFunction  :: !Id
+  , dteDstAddr   :: !Int
+  , dteSrcAddr   :: !Int
+  }
+  deriving (Eq, Ord, Show)
 
 instance Record DynTraceEntry where
-  asRow DTE{..} = show <$>
-    [ DS dteTimestamp
-    , DS dteThreadId
-    , DS dteFunction
-    , DS dteArgument
-    , DS dteClosure
-    ]
+  asRow entry =
+    (($ entry) <$> [show . dteTimestamp, show . dteThreadId, show . dteFunction])
+      ++ specific entry
+
+    where
+    specific DTEEntry{..} =
+      ["function entry"
+      ]
+    specific DTEDiff{..} =
+      [ "argument diff"
+      , show $ length dteDiff
+      , show dteDiff
+      ]
+    specific DTEUpdate{..} =
+      [ "update  frame"
+      , ""
+      , ""
+      , show dteSrcAddr
+      , show dteDstAddr
+      ]
+
+data TraceFrame = TF
+  { tfName    :: !Id
+  , tfArgPtrs :: ![Maybe Int]
+  , tfArgs    :: ![Either Atom HeapObject]
+  } deriving (Eq, Ord, Show)
 
 data StgState
   = StgState
@@ -320,6 +355,8 @@ data StgState
   , ssClosureCallCounter  :: !Int
   , ssCallGraph           :: !(StrictMap.Map (Maybe Id, Id) Int)
   , ssDynTrace            :: ![DynTraceEntry]
+  , ssTracingStack        :: ![TraceFrame]
+  , ssTracedPtrs          :: !IntSet
 
   -- debugger API
   , ssDebuggerChan        :: DebuggerChan
@@ -435,6 +472,8 @@ emptyStgState stateStore dl dbgChan nextDbgCmd dbgState tracingState gcIn gcOut 
   , ssClosureCallCounter  = 0
   , ssCallGraph           = mempty
   , ssDynTrace            = mempty
+  , ssTracingStack        = mempty
+  , ssTracedPtrs          = mempty
 
   -- debugger api
   , ssDebuggerChan        = dbgChan
@@ -555,6 +594,11 @@ allocAndStore o = do
   a <- freshHeapAddress
   store a o
   pure a
+
+getTime :: Num a => M a
+getTime = do
+  MkSystemTime {systemNanoseconds = ns} <- liftIO getSystemTime
+  pure $ fromIntegral ns
 
 store :: HasCallStack => Addr -> HeapObject -> M ()
 store a o = do

@@ -14,16 +14,13 @@ import Control.Monad.State.Strict
 import Control.Exception
 import qualified Data.Primitive.ByteArray as BA
 
-import Data.List (partition, isSuffixOf)
-import Data.Set (Set)
-import Data.Map (Map)
+import Data.List (isSuffixOf, partition)
+import Data.Maybe (fromJust)
 import qualified Data.Map.Strict as StrictMap
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.IntMap as IntMap
-import qualified Data.ByteString.Char8 as BS8
-import qualified Data.ByteString.Internal as BS
-import Data.Time.Clock.System (getSystemTime, SystemTime(MkSystemTime, systemNanoseconds))
+import qualified Data.IntSet as IntSet
 import System.Posix.DynamicLinker
 
 import System.FilePath
@@ -32,7 +29,6 @@ import System.Directory
 
 import Stg.Syntax
 import Stg.Program
-import Stg.JSON
 import Stg.Analysis.LiveVariable
 
 import Stg.Interpreter.Base
@@ -154,20 +150,46 @@ builtinStgEval a@HeapPtr{} = do
 
         modify' $ \s -> s {ssCurrentClosure = Just hoName, ssCurrentClosureEnv = extendedEnv, ssCurrentClosureAddr = l}
 
+        {-
         -- HACK HERE
         MkSystemTime {systemNanoseconds = time} <- liftIO getSystemTime
         let newEntry StgState{..} = DTE
               { dteTimestamp = fromIntegral time
               , dteThreadId  = ssCurrentThreadId
-              , dteFunction  = pure hoName
-              , dteArgument  = Nothing
+              , dteFunction  = currentClosure
+              , dteArgument  = pure $ show hoName
               , dteClosure   = Nothing
               }
         modify' $ \s@StgState{..} -> s {ssDynTrace = newEntry s : ssDynTrace}
+        --}
 
         Debugger.checkBreakpoint hoName
         Debugger.checkRegion hoName
         GC.checkGC [a] -- HINT: add local env as GC root
+
+        -- we are about to enter the closure's body, it's time to let the
+        -- tracing stack know about this and push all the important bits. That
+        -- means pushing a tracing frame with the closure's name, its actual
+        -- arguments, and the pointers to its heap arguments.
+
+        stackPush ClosureExitMarker
+        heap <- gets ssHeap
+        let toRight a'  Nothing  = Left  a'
+            toRight _  (Just  b) = Right b
+        let unptr (HeapPtr addr) = pure addr
+            unptr _              = Nothing
+        let deref addr = IntMap.lookup addr heap
+        let args = flip fmap hoCloArgs $ \case
+              at@(HeapPtr addr) -> toRight at $ deref addr
+              atom              -> Left atom
+        let ptrs = foldl (\acc -> \case
+              HeapPtr addr -> addr : acc
+              _            -> []
+              ) [] hoCloArgs
+        modify' $ \s@StgState{..} -> s
+          { ssTracingStack = TF hoName (unptr <$> hoCloArgs) args : ssTracingStack
+          , ssTracedPtrs   = foldr IntSet.insert ssTracedPtrs ptrs
+          }
 
         -- TODO: env or free var handling
         case uf of
@@ -328,8 +350,20 @@ evalStackContinuation result = \case
     -> builtinStgApply fun args
 
   Update dstAddr
-    | [src@HeapPtr{}] <- result
+    | [src@(HeapPtr addr)] <- result
     -> do
+      tracedPtrs <- gets ssTracedPtrs
+      when (IntSet.member dstAddr tracedPtrs) $ do
+        s@StgState{..} <- get
+        time <- getTime
+        let update = DTEUpdate
+              { dteTimestamp = time
+              , dteThreadId  = ssCurrentThreadId
+              , dteFunction  = fromJust ssCurrentClosure
+              , dteDstAddr   = dstAddr
+              , dteSrcAddr   = addr
+              }
+        put s {ssDynTrace = update : ssDynTrace}
       o <- readHeap src
       store dstAddr o
       pure result
@@ -383,6 +417,62 @@ evalStackContinuation result = \case
 
   -- HINT: dataToTag# has an eval call in the middle, that's why we need this continuation, it is the post-returning part of the op implementation
   DataToTagOp -> PrimTagToEnum.dataToTagOp result
+
+  ClosureExitMarker -> do
+    -- TODO: we need to pop the trace frame and update the log
+    StgState
+      { ssTracingStack    = TF{..} : stack
+      , ssCurrentThreadId = threadId
+      , ssHeap            = heap
+      } <- get
+
+    let classify = \case
+          Closure { hoCloArgs = supplied, hoCloMissing = missing } ->
+            case (length supplied, missing) of
+              (0, 0) -> "thunk"
+              (0, _) -> "fun"
+              _      -> "pap"
+              -- TODO: is it possible that some are supplied but none missing?
+              --       i.e. are PAPs reused as thunks?
+          Con {}       -> "con"
+          BlackHole {} -> "blackhole"
+          _            -> "?"
+    let deref addr = IntMap.lookup addr heap
+    let  currentArgs = show . fmap classify . (deref =<<) <$> tfArgPtrs
+    let originalArgs = (<$> fmap (fmap classify) tfArgs) $ \case
+          Left atom -> show atom
+          Right str -> str
+    let difference = curry $ \case
+          -- original arguments on the left (in an Either), the heap pointers on
+          -- the right. We'd like to produce diffs, i.e. pairs, which are only
+          -- meaningful for arguments on the heap. If we can't make a diff,
+          -- we'll say why.
+          (_,         Nothing)  -> Left ("not pointery" :: String)
+          (Right org, Just ptr) -> flip ($) (deref ptr) $ \case
+             Nothing  -> Left "gc'd (bug?)"
+             Just new -> Right (org, new)
+          (Left _,    Just _)   -> Left "mismatch between tfArgs and tfArgPtrs (bug)"
+    let diff' = zipWith difference tfArgs tfArgPtrs
+    let diff = (<$> diff') $ \case
+          Left  err        -> "<" ++ err ++ ">"
+          Right (org, new) ->
+            let [orgType, newType] = classify <$> [org, new] in
+            if   orgType /= newType
+            then orgType ++ "->" ++ newType
+            else orgType
+
+    time <- getTime
+    let entry = DTEDiff
+          { dteTimestamp = time
+          , dteThreadId  = threadId
+          , dteFunction  = tfName
+          , dteDiff      = diff
+          }
+
+    -- do the poppery and the loggery
+    modify' $ \s@StgState{..} -> s
+      { ssTracingStack = stack, ssDynTrace = entry : ssDynTrace }
+    pure result
 
   x -> error $ "unsupported continuation: " ++ show x ++ ", result: " ++ show result
 
@@ -659,7 +749,7 @@ runProgram switchCWD progFilePath mods0 progArgs dbgChan dbgState tracing = do
           DoTracing h -> hClose h
           _ -> pure ()
   flip catch (\e -> do {freeResources; throw (e :: SomeException)}) $ do
-    s@StgState{..} <- execStateT run (emptyStgState stateStore dl dbgChan nextDbgCmd dbgState tracingState gcIn gcOut)
+    StgState{..} <- execStateT run (emptyStgState stateStore dl dbgChan nextDbgCmd dbgState tracingState gcIn gcOut)
     when switchCWD $ setCurrentDirectory currentDir
     freeResources
 
@@ -679,7 +769,7 @@ runProgram switchCWD progFilePath mods0 progArgs dbgChan dbgState tracing = do
 flushStdHandles :: M ()
 flushStdHandles = do
   Rts{..} <- gets ssRtsSupport
-  evalOnNewThread $ do
+  _ <- evalOnNewThread $ do
     stackPush $ Apply [] -- HINT: force IO monad result to WHNF
     stackPush $ Apply [Void]
     pure [rtsTopHandlerFlushStdHandles]
