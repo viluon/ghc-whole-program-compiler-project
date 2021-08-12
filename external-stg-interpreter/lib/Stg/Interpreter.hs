@@ -677,18 +677,18 @@ declareTopBindings mods = do
   -- HINT: top level closures does not capture local variables
   forM_ rhsList $ \(b, addr, rhs) -> storeRhs False mempty b addr rhs
 
-loadAndRunProgram :: HasCallStack => Bool -> String -> [String] -> DebuggerChan -> DebugState -> Bool -> IO ()
-loadAndRunProgram switchCWD fullpak_name progArgs dbgChan dbgState tracing = do
+loadAndRunProgram :: HasCallStack => Bool -> String -> String -> [String] -> DebuggerChan -> DebugState -> Bool -> IO ()
+loadAndRunProgram switchCWD fullpak_name cbitsPath progArgs dbgChan dbgState tracing = do
 
   mods0 <- case takeExtension fullpak_name of
     ".fullpak"                          -> getFullpakModules fullpak_name
     ".json"                             -> getJSONModules fullpak_name
     ext | isSuffixOf "_ghc_stgapp" ext  -> getGhcStgAppModules fullpak_name
     _                                   -> error "unknown input file format"
-  runProgram switchCWD fullpak_name mods0 progArgs dbgChan dbgState tracing
+  runProgram switchCWD fullpak_name cbitsPath mods0 progArgs dbgChan dbgState tracing
 
-runProgram :: HasCallStack => Bool -> String -> [Module] -> [String] -> DebuggerChan -> DebugState -> Bool -> IO ()
-runProgram switchCWD progFilePath mods0 progArgs dbgChan dbgState tracing = do
+runProgram :: HasCallStack => Bool -> String -> String -> [Module] -> [String] -> DebuggerChan -> DebugState -> Bool -> IO ()
+runProgram switchCWD progFilePath cbitsPath mods0 progArgs dbgChan dbgState tracing = do
   let mods      = map annotateWithLiveVariables $ extStgRtsSupportModule : mods0 -- NOTE: add RTS support module
       progName  = dropExtension progFilePath
 
@@ -741,7 +741,7 @@ runProgram switchCWD progFilePath mods0 progArgs dbgChan dbgState tracing = do
   (gcThreadId, gcIn', gcOut') <- GC.init
   let gcIn  = PrintableMVar gcIn'
       gcOut = PrintableMVar gcOut'
-  dl <- dlopen "./libHSbase-4.14.0.0.cbits.so" [{-RTLD_NOW-}RTLD_LAZY, RTLD_LOCAL]
+  dl <- dlopen cbitsPath [{-RTLD_NOW-}RTLD_LAZY, RTLD_LOCAL]
   let freeResources = do
         dlclose dl
         killThread gcThreadId

@@ -14,6 +14,7 @@ data StgIOpts
   { switchCWD   :: Bool
   , runDebugger :: Bool
   , doTracing   :: Bool
+  , cbitsPath   :: String
   , dbgScript   :: Maybe String
   , appArgs1    :: String
   , appArgs2    :: [String]
@@ -26,7 +27,9 @@ stgi = StgIOpts
   <$> switch (long "cwd" <> help "Changes the working directory to where the APPFILE is located")
   <*> switch (short 'd' <> long "debug" <> help "Enable simple debugger")
   <*> switch (short 't' <> long "trace" <> help "Enable tracing")
-  <*> (optional $ strOption (long "debug-script" <> metavar "FILENAME" <> help "Run debug commands from file"))
+  <*> (\case { Nothing -> "./libHSbase-4.14.0.0.cbits.so"; Just x -> x }
+       <$> optional (strOption $ long "cbits-path" <> help "The path to the cbits dynamic library"))
+  <*> optional (strOption (long "debug-script" <> metavar "FILENAME" <> help "Run debug commands from file"))
   <*> strOption (long "args" <> value "" <> help "Space separated APPARGS")
   <*> many (strOption (short 'a' <> help "Single APPARG"))
   <*> argument str (metavar "APPFILE" <> help "The .ghc_stgapp or .fullpak file to run")
@@ -44,5 +47,5 @@ main = do
   let dbgChan = DebuggerChan (dbgCmdO, dbgOutI)
 
   case runDebugger of
-    True  -> debugProgram switchCWD appPath appArgs dbgChan dbgCmdI dbgOutO dbgScript
-    False -> loadAndRunProgram switchCWD appPath appArgs dbgChan DbgRunProgram doTracing
+    True  -> debugProgram switchCWD appPath cbitsPath appArgs dbgChan dbgCmdI dbgOutO dbgScript
+    False -> loadAndRunProgram switchCWD appPath cbitsPath appArgs dbgChan DbgRunProgram doTracing
