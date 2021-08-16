@@ -221,10 +221,6 @@ type Heap   = IntMap HeapObject
 type Env    = Map Id Atom   -- NOTE: must contain only the defined local variables
 type Stack  = [StackContinuation]
 
-data DS = forall a. Show a => DS !a
-instance Show DS where
-  show (DS x) = show x
-
 class Record a where
   asRow :: a -> [String]
 
@@ -258,17 +254,19 @@ instance Record DynTraceEntry where
       ++ specific entry
 
     where
+    -- for padding the lists
+    p = flip take $ repeat ("" :: String)
+
     specific DTEEntry{..} =
-      ["function entry"
-      ]
+      "function entry" : p 3
     specific DTEDiff{..} =
       [ "argument diff"
       , show $ length dteDiff
-      , show dteDiff
       ]
+      ++ p 2
+      ++ dteDiff
     specific DTEUpdate{..} =
       [ "update  frame"
-      , ""
       , ""
       , show dteSrcAddr
       , show dteDstAddr

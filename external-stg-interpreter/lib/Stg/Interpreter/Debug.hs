@@ -11,8 +11,9 @@ import System.IO
 
 import Control.Monad.State.Strict
 
-import Data.List (intercalate)
+import Data.List (intercalate, maximumBy)
 import Data.Foldable (traverse_)
+import Data.Function (on)
 
 import Stg.Syntax
 import Stg.Interpreter.Base
@@ -147,14 +148,15 @@ exportDynTrace = do
   trace <- gets ssDynTrace
   liftIO $ do
     withFile (progName ++ "-dyn-trace.tsv") WriteMode $ \h -> do
-      hPutStrLn h $ intercalate "\t"
+      -- let arity = length . join (\case DTEDiff {} -> dteDiff; _ -> const [])
+      -- let maxArity = arity $ maximumBy (compare `on` arity) trace
+      hPutStrLn h $ intercalate "\t" $
         [ "timestamp"
         , "thread id"
         , "function"
         , "type"
-        , "num args"
-        , "arg diff"
+        , "arity"
         , "src address"
         , "dst address"
-        ]
+        ] ++ (("arg" ++) . show <$> [1 .. 30])
       traverse_ (hPutStrLn h . tsv) $ reverse trace
