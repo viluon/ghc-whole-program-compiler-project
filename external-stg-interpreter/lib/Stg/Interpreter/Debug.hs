@@ -155,6 +155,8 @@ exportDynTrace = do
         , "thread id"
         , "function"
         , "type"
+        , "is thunk"
+        , "lifetime"
         , "arity"
         , "result atoms"
         , "src address"

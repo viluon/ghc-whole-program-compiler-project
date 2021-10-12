@@ -262,7 +262,7 @@ instance Record DynTraceEntry where
     p = flip take $ repeat ("" :: String)
 
     specific DTEEntry{..} =
-      [ "function entry"
+      [ "closure entry"
       , show dteThunk
       , show dteLifetime
       ]
