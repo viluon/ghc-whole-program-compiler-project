@@ -238,6 +238,7 @@ data DynTraceEntry
   , dteThreadId  :: !Int
   , dteFunction  :: !Id
   , dteDiff      :: ![String]
+  , dteResult    :: !String
   }
   | DTEUpdate
   { dteTimestamp :: !Int
@@ -258,15 +259,17 @@ instance Record DynTraceEntry where
     p = flip take $ repeat ("" :: String)
 
     specific DTEEntry{..} =
-      "function entry" : p 3
+      "function entry" : p 4
     specific DTEDiff{..} =
       [ "argument diff"
       , show $ length dteDiff
+      , dteResult
       ]
       ++ p 2
       ++ dteDiff
     specific DTEUpdate{..} =
       [ "update  frame"
+      , ""
       , ""
       , show dteSrcAddr
       , show dteDstAddr
@@ -352,6 +355,7 @@ data StgState
   , ssHeapStartAddress    :: !Int
   , ssClosureCallCounter  :: !Int
   , ssCallGraph           :: !(StrictMap.Map (Maybe Id, Id) Int)
+  -- viluon's edits
   , ssDynTrace            :: ![DynTraceEntry]
   , ssTracingStack        :: ![TraceFrame]
   , ssTracedPtrs          :: !IntSet

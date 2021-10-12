@@ -14,7 +14,7 @@ import Control.Monad.State.Strict
 import Control.Exception
 import qualified Data.Primitive.ByteArray as BA
 
-import Data.List (isSuffixOf, partition)
+import Data.List (isSuffixOf, partition, intercalate)
 import Data.Maybe (fromJust)
 import qualified Data.Map.Strict as StrictMap
 import qualified Data.Map as Map
@@ -461,12 +461,17 @@ evalStackContinuation result = \case
             then orgType ++ "->" ++ newType
             else orgType
 
+    let res = intercalate ", " $ (<$> result) $ \case
+          HeapPtr n -> maybe "null" classify $ deref n
+          other     -> show other
+
     time <- getTime
     let entry = DTEDiff
           { dteTimestamp = time
           , dteThreadId  = threadId
           , dteFunction  = tfName
           , dteDiff      = diff
+          , dteResult    = "[" ++ res ++ "]"
           }
 
     -- do the poppery and the loggery

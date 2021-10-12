@@ -156,6 +156,7 @@ exportDynTrace = do
         , "function"
         , "type"
         , "arity"
+        , "result atoms"
         , "src address"
         , "dst address"
         ] ++ (("arg" ++) . show <$> [1 .. 30])
