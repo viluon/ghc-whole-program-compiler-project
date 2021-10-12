@@ -140,6 +140,7 @@ data HeapObject
     , hoEnv         :: Env    -- local environment ; with live variables only, everything else is pruned
     , hoCloArgs     :: [Atom]
     , hoCloMissing  :: Int    -- HINT: this is a Thunk if 0 arg is missing ; if all is missing then Fun ; Pap is some arg is provided
+    , hoAllocTime   :: !Int
     }
   | BlackHole HeapObject
   | ApStack                   -- HINT: needed for the async exceptions
@@ -228,19 +229,21 @@ tsv :: Record a => a -> String
 tsv = intercalate "\t" . asRow
 
 data DynTraceEntry
-  = DTEEntry
+  = DTEEntry -- ^ Marks the start of closure evaluation.
   { dteTimestamp :: !Int
   , dteThreadId  :: !Int
   , dteFunction  :: !Id
+  , dteThunk     :: !Bool
+  , dteLifetime  :: !Int
   }
-  | DTEDiff
+  | DTEDiff -- ^ Marks the end of closure evaluation. Carries the diff of the closure's arguments pre- and post-evaluation.
   { dteTimestamp :: !Int
   , dteThreadId  :: !Int
   , dteFunction  :: !Id
   , dteDiff      :: ![String]
   , dteResult    :: !String
   }
-  | DTEUpdate
+  | DTEUpdate -- ^ Marks an update frame.
   { dteTimestamp :: !Int
   , dteThreadId  :: !Int
   , dteFunction  :: !Id
@@ -259,9 +262,15 @@ instance Record DynTraceEntry where
     p = flip take $ repeat ("" :: String)
 
     specific DTEEntry{..} =
-      "function entry" : p 4
+      [ "function entry"
+      , show dteThunk
+      , show dteLifetime
+      ]
+      ++ p 4
     specific DTEDiff{..} =
       [ "argument diff"
+      , ""
+      , ""
       , show $ length dteDiff
       , dteResult
       ]
@@ -269,6 +278,8 @@ instance Record DynTraceEntry where
       ++ dteDiff
     specific DTEUpdate{..} =
       [ "update  frame"
+      , ""
+      , ""
       , ""
       , ""
       , show dteSrcAddr
@@ -359,6 +370,7 @@ data StgState
   , ssDynTrace            :: ![DynTraceEntry]
   , ssTracingStack        :: ![TraceFrame]
   , ssTracedPtrs          :: !IntSet
+  , ssClosureExitCount    :: !Int
 
   -- debugger API
   , ssDebuggerChan        :: DebuggerChan
@@ -473,9 +485,11 @@ emptyStgState stateStore dl dbgChan nextDbgCmd dbgState tracingState gcIn gcOut 
   , ssHeapStartAddress    = 0
   , ssClosureCallCounter  = 0
   , ssCallGraph           = mempty
+
   , ssDynTrace            = mempty
   , ssTracingStack        = mempty
   , ssTracedPtrs          = mempty
+  , ssClosureExitCount    = 0
 
   -- debugger api
   , ssDebuggerChan        = dbgChan

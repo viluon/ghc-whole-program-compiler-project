@@ -68,6 +68,7 @@ import qualified Stg.Interpreter.PrimOp.WeakPointer   as PrimWeakPointer
 import qualified Stg.Interpreter.PrimOp.TagToEnum     as PrimTagToEnum
 import qualified Stg.Interpreter.PrimOp.Unsafe        as PrimUnsafe
 import qualified Stg.Interpreter.PrimOp.MiscEtc       as PrimMiscEtc
+import Stg.Interpreter.Base (StgState(ssClosureExitCount))
 
 {-
   Q: what is the operational semantic of StgApp
@@ -186,9 +187,17 @@ builtinStgEval a@HeapPtr{} = do
               HeapPtr addr -> addr : acc
               _            -> []
               ) [] hoCloArgs
+        time <- getTime
         modify' $ \s@StgState{..} -> s
-          { ssTracingStack = TF hoName (unptr <$> hoCloArgs) args : ssTracingStack
-          , ssTracedPtrs   = foldr IntSet.insert ssTracedPtrs ptrs
+          { ssTracingStack     = TF hoName (unptr <$> hoCloArgs) args : ssTracingStack
+          , ssTracedPtrs       = foldr IntSet.insert ssTracedPtrs ptrs
+          , ssDynTrace         = DTEEntry { dteTimestamp = time
+                                          , dteThreadId  = ssCurrentThreadId
+                                          , dteFunction  = fromJust ssCurrentClosure
+                                          , dteThunk     = hoCloMissing == 0 && null hoCloArgs
+                                          , dteLifetime  = ssClosureExitCount - hoAllocTime
+                                          } : ssDynTrace
+          , ssClosureExitCount = ssClosureExitCount + 1
           }
 
         -- TODO: env or free var handling
@@ -651,7 +660,8 @@ storeRhs isLetNoEscape localEnv i addr = \case
   cl@(StgRhsClosure freeVars _ paramNames _) -> do
     let liveSet   = Set.fromList $ map Id freeVars
         prunedEnv = Map.restrictKeys localEnv liveSet -- HINT: do pruning to keep only the live/later referred variables
-    store addr (Closure isLetNoEscape (Id i) cl prunedEnv [] (length paramNames))
+    StgState{ ssClosureExitCount = c } <- get
+    store addr (Closure isLetNoEscape (Id i) cl prunedEnv [] (length paramNames) c)
 
 -----------------------
 
