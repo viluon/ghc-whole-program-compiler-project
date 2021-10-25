@@ -233,7 +233,7 @@ data DynTraceEntry
   { dteTimestamp :: !Int
   , dteThreadId  :: !Int
   , dteFunction  :: !Id
-  , dteThunk     :: !Bool
+  , dteCloType   :: !String
   , dteLifetime  :: !Int
   }
   | DTEDiff -- ^ Marks the end of closure evaluation. Carries the diff of the closure's arguments pre- and post-evaluation.
@@ -263,7 +263,7 @@ instance Record DynTraceEntry where
 
     specific DTEEntry{..} =
       [ "closure entry"
-      , show dteThunk
+      , dteCloType
       , show dteLifetime
       ]
       ++ p 4

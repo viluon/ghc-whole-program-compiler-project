@@ -194,7 +194,7 @@ builtinStgEval a@HeapPtr{} = do
           , ssDynTrace         = DTEEntry { dteTimestamp = time
                                           , dteThreadId  = ssCurrentThreadId
                                           , dteFunction  = fromJust ssCurrentClosure
-                                          , dteThunk     = hoCloMissing == 0 && null hoCloArgs
+                                          , dteCloType   = classify o
                                           , dteLifetime  = ssClosureExitCount - hoAllocTime
                                           } : ssDynTrace
           , ssClosureExitCount = ssClosureExitCount + 1
@@ -352,6 +352,18 @@ evalStackMachine result = do
     Nothing         -> pure result
     Just stackCont  -> evalStackContinuation result stackCont >>= evalStackMachine
 
+classify :: HeapObject -> String
+classify Closure {hoCloArgs = supplied, hoCloMissing = missing} =
+  case (length supplied, missing) of
+    (0, 0) -> "thunk"
+    (0, _) -> "fun"
+    _ -> "pap"
+-- TODO: is it possible that some are supplied but none missing?
+--       i.e. are PAPs reused as thunks?
+classify Con {}                                                 = "con"
+classify BlackHole {}                                           = "blackhole"
+classify _                                                      = "?"
+
 evalStackContinuation :: [Atom] -> StackContinuation -> M [Atom]
 evalStackContinuation result = \case
   Apply args
@@ -435,17 +447,6 @@ evalStackContinuation result = \case
       , ssHeap            = heap
       } <- get
 
-    let classify = \case
-          Closure { hoCloArgs = supplied, hoCloMissing = missing } ->
-            case (length supplied, missing) of
-              (0, 0) -> "thunk"
-              (0, _) -> "fun"
-              _      -> "pap"
-              -- TODO: is it possible that some are supplied but none missing?
-              --       i.e. are PAPs reused as thunks?
-          Con {}       -> "con"
-          BlackHole {} -> "blackhole"
-          _            -> "?"
     let deref addr = IntMap.lookup addr heap
     let  currentArgs = show . fmap classify . (deref =<<) <$> tfArgPtrs
     let originalArgs = (<$> fmap (fmap classify) tfArgs) $ \case
