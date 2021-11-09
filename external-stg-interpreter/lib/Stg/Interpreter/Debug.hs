@@ -6,8 +6,14 @@ import qualified Data.Set as Set
 import qualified Data.IntMap as IntMap
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.ByteString.Internal as BS
+import qualified Data.ByteString.Char8 as BS8
+import qualified Data.Map as Map
 import qualified Data.Map.Strict as StrictMap
+import Data.List (intercalate, foldl', sortOn)
 import System.IO
+import System.Directory
+import System.FilePath
+import Text.Printf
 
 import Control.Monad.State.Strict
 
@@ -128,18 +134,60 @@ showDebug evalOnNewThread = do
 exportCallGraph :: M ()
 exportCallGraph = do
   Rts{..} <- gets ssRtsSupport
-  cg <- gets ssCallGraph
+  globalCallGraph <- gets ssCallGraph
   liftIO $ do
-    withFile (rtsProgName ++ "-call-graph.tsv") WriteMode $ \h -> do
-      hPutStrLn h "Source\tTarget\tcount"
-      forM_ (StrictMap.toList cg) $ \((from, to), count) -> do
-        let fromS = maybe "<global>" show from
-            toS   = show to
-        hPutStrLn h $ fromS ++ "\t" ++ toS ++ "\t" ++ show count
+    writeCallGraph (rtsProgName ++ "-call-graph.tsv") globalCallGraph
+    writeCallGraphSummary (rtsProgName ++ "-call-graph-summary") globalCallGraph
 
-deleteAt :: Int -> [a] -> [a]
-deleteAt n xs = init pre ++ suf where
-  (pre, suf) = splitAt n xs
+exportRegionCallGraph :: Region -> M ()
+exportRegionCallGraph r@Region{..} = do
+  regions <- gets ssRegions
+  case Map.lookup r regions of
+    Just (Just{}, callGraph, l) -> do
+      Rts{..} <- gets ssRtsSupport
+      let regionName  = BS8.unpack regionStart ++ "-" ++ BS8.unpack regionEnd
+          dirName     = "." ++ rtsProgName ++ "-call-graph" </> regionName
+          idx         = length l
+      liftIO $ do
+        regionPath <- makeAbsolute dirName
+        createDirectoryIfMissing True regionPath
+        putStrLn $ "save call graphs to: " ++ regionPath
+        writeCallGraph (regionPath </> printf "%04d" idx ++ ".tsv") callGraph
+        writeCallGraphSummary (regionPath </> printf "%04d" idx ++ "-summary") callGraph
+
+    _ -> pure () -- HINT: ignore missing regions or non-open regions
+
+writeCallGraph :: FilePath -> CallGraph -> IO ()
+writeCallGraph fname CallGraph{..} = do
+  let showSO = \case
+        SO_CloArg         -> "unknown"
+        SO_Let            -> "known"
+        SO_Scrut          -> "unknown"
+        SO_AltArg         -> "unknown"
+        SO_TopLevel       -> "known"
+        SO_Builtin        -> "known"
+        SO_ClosureResult  -> "unknown"
+  withFile fname WriteMode $ \h -> do
+    hPutStrLn h "count\tSource\tTarget\tstatic-origin\tcall-site-type"
+    forM_ (sortOn (negate . snd) $ StrictMap.toList cgInterClosureCallGraph) $ \((so, from, to), count) -> do
+      hPutStrLn h $ intercalate "\t" [show count, show from, show to, show so, showSO so]
+    forM_ (sortOn (negate . snd) $ StrictMap.toList cgIntraClosureCallGraph) $ \((from, so, to), count) -> do
+      hPutStrLn h $ intercalate "\t" [show count, show from, show to, "direct", "direct"]
+
+writeCallGraphSummary :: FilePath -> CallGraph -> IO ()
+writeCallGraphSummary fname CallGraph{..} = do
+  let cgFrequencyList = StrictMap.elems cgInterClosureCallGraph ++ StrictMap.elems cgIntraClosureCallGraph
+      cgMin   = minimum cgFrequencyList
+      cgMax   = maximum cgFrequencyList
+      cgSum   = sum cgFrequencyList
+      cgSize  = StrictMap.size cgInterClosureCallGraph + StrictMap.size cgIntraClosureCallGraph
+  withFile fname WriteMode $ \h -> do
+    hPutStrLn h $ unlines
+      [ printf "min: %d" cgMin
+      , printf "max: %d" cgMax
+      , printf "sum: %d" cgSum
+      , printf "size (edge count): %d" cgSize
+      ]
 
 -- TODO: should really be called from all the places exportCallGraph is
 exportDynTrace :: M ()

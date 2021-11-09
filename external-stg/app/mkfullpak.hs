@@ -61,6 +61,11 @@ main = do
     addEntry Deflate content appinfo
     setExternalFileAttrs (fromFileMode 0o0644) appinfo
 
+    -- add .ghc_stgapp to .fullpak
+    app_ghcstgapp <- mkEntrySelector "app.ghc_stgapp"
+    loadEntry Deflate app_ghcstgapp ghcstgappPath
+    setExternalFileAttrs (fromFileMode 0o0644) app_ghcstgapp
+
     -- copy module content
     forM_ fullpakModules $ \StgModuleInfo{..} -> do
       let files =
@@ -71,6 +76,7 @@ main = do
             , "module.hs"
             , "module.cmm"
             , "module.s"
+            , "module.info"
             ]
       forM_ files $ \fn -> do
         (src, dst) <- liftIO $ do

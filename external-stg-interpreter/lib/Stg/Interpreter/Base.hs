@@ -81,6 +81,7 @@ data PtrOrigin
   | ByteArrayPtr  !ByteArrayIdx     -- raw ptr to the byte array
   | RawPtr                          -- raw ptr to a values with unknown origin (i.e. FFI)
   | StablePtr     !Int              -- stable pointer must have AddrRep
+  | LabelPtr      !Name !LabelSpec  -- foreign symbol/label name + label sepcification (i.e. data or function)
   deriving (Show, Eq, Ord)
 
 data WeakPtrDescriptor
@@ -163,6 +164,11 @@ data StackContinuation
   | RunScheduler  !ScheduleReason
   | DataToTagOp
   | ClosureExitMarker
+  | DebugFrame    !DebugFrame             -- for debug purposes, it does not required for STG evaluation
+  deriving (Show, Eq, Ord)
+
+data DebugFrame
+  = RestoreProgramPoint !(Maybe Id) !ProgramPoint
   deriving (Show, Eq, Ord)
 
 data ScheduleReason
@@ -218,12 +224,31 @@ data DebugState
 
 data TracingState
   = NoTracing
-  | DoTracing Handle
+  | DoTracing
+    { thOriginDB          :: Handle
+    , thWholeProgramPath  :: Handle
+    }
   deriving (Show)
+
+data CallGraph
+  = CallGraph
+  { cgInterClosureCallGraph :: !(StrictMap.Map (StaticOrigin, ProgramPoint, ProgramPoint) Int)
+  , cgIntraClosureCallGraph :: !(StrictMap.Map (ProgramPoint, StaticOrigin, ProgramPoint) Int)
+  }
+  deriving (Show)
+
+joinCallGraph :: CallGraph -> CallGraph -> CallGraph
+joinCallGraph (CallGraph a1 b1) (CallGraph a2 b2) = CallGraph (StrictMap.unionWith (+) a1 a2) (StrictMap.unionWith (+) b1 b2)
+
+emptyCallGraph :: CallGraph
+emptyCallGraph = CallGraph
+  { cgInterClosureCallGraph = mempty
+  , cgIntraClosureCallGraph = mempty
+  }
 
 type Addr   = Int
 type Heap   = IntMap HeapObject
-type Env    = Map Id Atom   -- NOTE: must contain only the defined local variables
+type Env    = Map Id (StaticOrigin, Atom)   -- NOTE: must contain only the defined local variables
 type Stack  = [StackContinuation]
 
 class Record a where
@@ -297,6 +322,16 @@ data TraceFrame = TF
   , tfArgPtrs :: ![Maybe Int]
   , tfArgs    :: ![Either Atom HeapObject]
   } deriving (Eq, Ord, Show)
+
+data StaticOrigin
+  = SO_CloArg
+  | SO_Let
+  | SO_Scrut
+  | SO_AltArg
+  | SO_TopLevel
+  | SO_Builtin
+  | SO_ClosureResult
+  deriving (Show, Eq, Ord)
 
 data StgState
   = StgState
@@ -372,12 +407,15 @@ data StgState
   , ssExecutedPrimCalls   :: !(Set PrimCall)
   , ssHeapStartAddress    :: !Int
   , ssClosureCallCounter  :: !Int
-  , ssCallGraph           :: !(StrictMap.Map (Maybe Id, Id) Int)
   -- viluon's edits
   , ssDynTrace            :: ![DynTraceEntry]
   , ssTracingStack        :: ![TraceFrame]
   , ssTracedPtrs          :: !IntSet
   , ssClosureExitCount    :: !Int
+
+  -- call graph
+  , ssCallGraph           :: !CallGraph
+  , ssCurrentProgramPoint :: !ProgramPoint
 
   -- debugger API
   , ssDebuggerChan        :: DebuggerChan
@@ -389,7 +427,7 @@ data StgState
 
   -- region tracker
   , ssMarkers             :: !(Map Name (Set Region))
-  , ssRegions             :: !(Map Region (Maybe AddressState, [(AddressState, AddressState)]) )
+  , ssRegions             :: !(Map Region (Maybe AddressState, CallGraph, [(AddressState, AddressState)]) )
 
   -- retainer db
   , ssReferenceMap        :: !(IntMap IntSet)
@@ -492,7 +530,10 @@ emptyStgState stateStore dl dbgChan nextDbgCmd dbgState tracingState gcIn gcOut 
   , ssExecutedPrimCalls   = Set.empty
   , ssHeapStartAddress    = 0
   , ssClosureCallCounter  = 0
-  , ssCallGraph           = mempty
+
+  -- call graph
+  , ssCallGraph           = emptyCallGraph
+  , ssCurrentProgramPoint = PP_Global
 
   , ssDynTrace            = mempty
   , ssTracingStack        = mempty
@@ -664,28 +705,28 @@ stgErrorM msg = do
   liftIO $ putStrLn $ "current closure: " ++ show curClosure
   error "stgErrorM"
 
-addBinderToEnv :: Binder -> Atom -> Env -> Env
-addBinderToEnv b = Map.insert (Id b)
+addBinderToEnv :: StaticOrigin -> Binder -> Atom -> Env -> Env
+addBinderToEnv so b a = Map.insert (Id b) (so, a)
 
-addZippedBindersToEnv :: [(Binder, Atom)] -> Env -> Env
-addZippedBindersToEnv bvList env = foldl' (\e (b, v) -> Map.insert (Id b) v e) env bvList
+addZippedBindersToEnv :: StaticOrigin -> [(Binder, Atom)] -> Env -> Env
+addZippedBindersToEnv so bvList env = foldl' (\e (b, v) -> Map.insert (Id b) (so, v) e) env bvList
 
-addManyBindersToEnv :: [Binder] -> [Atom] -> Env -> Env
-addManyBindersToEnv binders values = addZippedBindersToEnv $ zip binders values
+addManyBindersToEnv :: StaticOrigin -> [Binder] -> [Atom] -> Env -> Env
+addManyBindersToEnv so binders values = addZippedBindersToEnv so $ zip binders values
 
 -- NOTE: for builtin uniques see: compiler/GHC/Builtin/Names.hs i.e. voidPrimIdKey
-lookupEnv :: HasCallStack => Env -> Binder -> M Atom
-lookupEnv localEnv b
+lookupEnvSO :: HasCallStack => Env -> Binder -> M (StaticOrigin, Atom)
+lookupEnvSO localEnv b
  | binderId b == BinderId (Unique '0' 124) -- coercionToken#
- = pure Void
+ = pure (SO_Builtin, Void)
  | binderId b == BinderId (Unique '0' 21) -- void#
- = pure Void
+ = pure (SO_Builtin, Void)
  | binderId b == BinderId (Unique '0' 15) -- realWorld#
- = pure Void
+ = pure (SO_Builtin, Void)
  | binderId b == BinderId (Unique '0' 502) -- proxy#
- = pure Void
+ = pure (SO_Builtin, Void)
  | binderId b == BinderId (Unique '8' 1) -- GHC.Prim.(##)
- = pure Void
+ = pure (SO_Builtin, Void)
  | otherwise
  = do
   env <- if binderTopLevel b
@@ -694,6 +735,9 @@ lookupEnv localEnv b
   case Map.lookup (Id b) env of
     Nothing -> stgErrorM $ "unknown variable: " ++ show b
     Just a  -> pure a
+
+lookupEnv :: HasCallStack => Env -> Binder -> M Atom
+lookupEnv localEnv b = snd <$> lookupEnvSO localEnv b
 
 readHeap :: HasCallStack => Atom -> M HeapObject
 readHeap (HeapPtr l) = do
@@ -841,8 +885,33 @@ markFFI i = modify' $ \s@StgState{..} -> s {ssExecutedFFI = setInsert i ssExecut
 markPrimCall :: PrimCall -> M ()
 markPrimCall i = modify' $ \s@StgState{..} -> s {ssExecutedPrimCalls = setInsert i ssExecutedPrimCalls}
 
-addCallGraphEdge :: Maybe Id -> Id -> M ()
-addCallGraphEdge from to = modify' $ \s@StgState{..} -> s {ssCallGraph = StrictMap.insertWith (+) (from, to) 1 ssCallGraph}
+-- call graph
+-- HINT: build separate call graph for each region
+
+addInterClosureCallGraphEdge :: StaticOrigin -> ProgramPoint -> ProgramPoint -> M ()
+addInterClosureCallGraphEdge so from to = do
+  let addEdge g@CallGraph{..} = g {cgInterClosureCallGraph = StrictMap.insertWith (+) (so, from, to) 1 cgInterClosureCallGraph}
+      updateRegion = \case
+        (a@Just{}, regionCallGraph, l) -> (a, addEdge regionCallGraph, l)
+        r -> r
+  modify' $ \s@StgState{..} -> s
+    { ssCallGraph = addEdge ssCallGraph
+    , ssRegions   = fmap updateRegion ssRegions
+    }
+
+addIntraClosureCallGraphEdge :: ProgramPoint -> StaticOrigin -> ProgramPoint -> M ()
+addIntraClosureCallGraphEdge from so to = do
+  let addEdge g@CallGraph{..} = g {cgIntraClosureCallGraph = StrictMap.insertWith (+) (from, so, to) 1 cgIntraClosureCallGraph}
+      updateRegion = \case
+        (a@Just{}, regionCallGraph, l) -> (a, addEdge regionCallGraph, l)
+        r -> r
+  modify' $ \s@StgState{..} -> s
+    { ssCallGraph = addEdge ssCallGraph
+    , ssRegions   = fmap updateRegion ssRegions
+    }
+
+setProgramPoint :: ProgramPoint -> M ()
+setProgramPoint pp = modify' $ \s@StgState{..} -> s {ssCurrentProgramPoint = pp}
 
 -- string constants
 -- NOTE: the string gets extended with a null terminator
@@ -1216,3 +1285,25 @@ markLNE :: [Addr] -> M ()
 markLNE lneAddrs = do
   let count = length lneAddrs
   modify' $ \s@StgState{..} -> s { ssTotalLNECount = count + ssTotalLNECount}
+
+-- program point
+
+data ProgramPoint
+  = PP_Global
+  | PP_Closure    Id          -- closure name
+  | PP_Scrutinee  Id          -- qualified scrutinee result name
+  | PP_Alt        Id AltCon   -- qualified scrutinee result name, alternative pattern
+  | PP_Apply      Int ProgramPoint
+  deriving (Eq, Ord)
+
+instance Show ProgramPoint where show = showProgramPoint
+
+showProgramPoint :: ProgramPoint -> String
+showProgramPoint = \case
+  PP_Global       -> "<global>"
+  PP_Closure n    -> show n
+  PP_Scrutinee v  -> "scrut: " ++ show v
+  PP_Alt v pat    -> "alt: " ++ show v ++ " " ++ case pat of
+    AltDataCon dc -> "AltDataCon " ++ show (DC dc)
+    _             -> show pat
+  PP_Apply i p    -> "apply " ++ show i ++ ": " ++ show p

@@ -181,7 +181,7 @@ exportStgStateM stgState@StgState{..} = do
 
   -- static global env
   forM_ (Map.toList ssStaticGlobalEnv) $ \(n, a) -> do
-    addFact "StaticGlobalEnv" [ID n, A a]
+    addFact "StaticGlobalEnv" [ID n, A $ snd a]
 
   -- heap
   forM_ (IntMap.toList ssHeap) $ \(i, ho) -> case ho of
@@ -195,7 +195,7 @@ exportStgStateM stgState@StgState{..} = do
       forM_ (zip [0..] hoCloArgs) $ \(idx, a) -> do
         addFact "Heap_ClosureArg" [I i, I idx, A a]
       forM_ (zip [0..] (Map.toList hoEnv)) $ \(idx, (n, a)) -> do
-        addFact "Heap_ClosureEnv" [I i, I idx, ID n, A a]
+        addFact "Heap_ClosureEnv" [I i, I idx, ID n, A $ snd a]
 
     BlackHole o -> do
       addFact "Heap_BlackHole" [I i, S (GC.debugPrintHeapObject o)]
@@ -235,7 +235,7 @@ exportStgStateM stgState@StgState{..} = do
       addFact "TraceMarker" [S n, I i, S ns, I value]
 
   -- regions
-  forM_ (Map.toList ssRegions) $ \(Region start_name end_name, (_, l)) -> do
+  forM_ (Map.toList ssRegions) $ \(Region start_name end_name, (_, _curCallGraph, l)) -> do
     forM_ (zip [0..] (reverse l)) $ \(idx, (s, e)) -> do
       forM_ (zip (genAddressState s) (genAddressState e)) $ \((start_ns, start_value), (end_ns, end_value)) -> do
         addFact "Region" [N start_name, N end_name, I idx, S start_ns, I start_value, I end_value]
@@ -291,7 +291,7 @@ emitStack stackId stack = do
       CaseOf _ clName env result _ _ -> do
         addFact "Stack_CaseOf" [S stackId, I frame, ID clName, ID (Id result), I (Map.size env)]
         forM_ (zip [0..] (Map.toList env)) $ \(envIdx, (n, a)) -> do
-          addFact "Stack_CaseOfEnv" [S stackId, I frame, I envIdx, ID n, A a]
+          addFact "Stack_CaseOfEnv" [S stackId, I frame, I envIdx, ID n, A $ snd a]
 
       _ -> pure ()
 
