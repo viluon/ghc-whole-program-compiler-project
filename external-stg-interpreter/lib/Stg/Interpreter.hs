@@ -207,7 +207,7 @@ builtinStgEval so a@HeapPtr{} = do
           , ssTracedPtrs       = foldr IntSet.insert ssTracedPtrs ptrs
           , ssDynTrace         = DTEEntry { dteTimestamp      = time
                                           , dteThreadId       = ssCurrentThreadId
-                                          , dteFunction       = fromJust ssCurrentClosure
+                                          , dteFunction       = show $ fromJust ssCurrentClosure
                                           , dteCloType        = classify o
                                           , dteLifetime       = ssClosureExitCount - hoAllocTime
                                           , dteCyclesSurvived = ssGCCycle - hoAllocCycle
@@ -491,7 +491,7 @@ evalStackContinuation result = \case
     let entry = DTEDiff
           { dteTimestamp = time
           , dteThreadId  = threadId
-          , dteFunction  = tfName
+          , dteFunction  = show tfName
           , dteDiff      = diff
           , dteResult    = "[" ++ res ++ "]"
           }
@@ -712,8 +712,9 @@ storeRhs isLetNoEscape localEnv i addr = \case
     time <- getTime
     let allocation = DTEAlloc
           { dteTimestamp = time
-          , dteThreadId  = ssCurrentThreadId
-          , dteFunction  = fromJust ssCurrentClosure
+          , dteThreadId  = -1 -- FIXME: storeRhs is sometimes called when
+                              -- ssCurrentThreadId hasn't been initialised yet
+          , dteFunction  = maybe "" show ssCurrentClosure
           , dteCloType   = classify closure
           , dteAddress   = addr
           }

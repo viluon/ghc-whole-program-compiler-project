@@ -261,7 +261,7 @@ data DynTraceEntry
   = DTEEntry -- ^ Marks the start of closure evaluation.
   { dteTimestamp      :: !Int
   , dteThreadId       :: !Int
-  , dteFunction       :: !Id
+  , dteFunction       :: !String
   , dteCloType        :: !String
   , dteLifetime       :: !Int
   , dteCyclesSurvived :: !Int -- ^ the number of GC cycles the entered closure lived for
@@ -269,14 +269,14 @@ data DynTraceEntry
   | DTEDiff -- ^ Marks the end of closure evaluation. Carries the diff of the closure's arguments pre- and post-evaluation.
   { dteTimestamp :: !Int
   , dteThreadId  :: !Int
-  , dteFunction  :: !Id
+  , dteFunction  :: !String
   , dteDiff      :: ![String]
   , dteResult    :: !String
   }
   | DTEAlloc -- ^ Marks the allocation of a closure.
   { dteTimestamp :: !Int
   , dteThreadId  :: !Int
-  , dteFunction  :: !Id
+  , dteFunction  :: !String
   , dteCloType   :: !String
   , dteAddress   :: !Addr
   }
@@ -284,7 +284,7 @@ data DynTraceEntry
 
 instance Record DynTraceEntry where
   asRow entry =
-    (($ entry) <$> [show . dteTimestamp, show . dteThreadId, show . dteFunction])
+    (($ entry) <$> [show . dteTimestamp, show . dteThreadId, dteFunction])
       ++ specific entry
 
     where
