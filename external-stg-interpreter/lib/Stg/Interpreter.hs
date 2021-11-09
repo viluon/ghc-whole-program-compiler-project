@@ -68,7 +68,7 @@ import qualified Stg.Interpreter.PrimOp.WeakPointer   as PrimWeakPointer
 import qualified Stg.Interpreter.PrimOp.TagToEnum     as PrimTagToEnum
 import qualified Stg.Interpreter.PrimOp.Unsafe        as PrimUnsafe
 import qualified Stg.Interpreter.PrimOp.MiscEtc       as PrimMiscEtc
-import Stg.Interpreter.Base (StgState(ssClosureExitCount))
+import Stg.Interpreter.Base (StgState(ssClosureExitCount, ssDynTrace), DynTraceEntry (DTEAlloc, dteThreadId, dteCloType))
 
 {-
   Q: what is the operational semantic of StgApp
@@ -191,11 +191,12 @@ builtinStgEval a@HeapPtr{} = do
         modify' $ \s@StgState{..} -> s
           { ssTracingStack     = TF hoName (unptr <$> hoCloArgs) args : ssTracingStack
           , ssTracedPtrs       = foldr IntSet.insert ssTracedPtrs ptrs
-          , ssDynTrace         = DTEEntry { dteTimestamp = time
-                                          , dteThreadId  = ssCurrentThreadId
-                                          , dteFunction  = fromJust ssCurrentClosure
-                                          , dteCloType   = classify o
-                                          , dteLifetime  = ssClosureExitCount - hoAllocTime
+          , ssDynTrace         = DTEEntry { dteTimestamp      = time
+                                          , dteThreadId       = ssCurrentThreadId
+                                          , dteFunction       = fromJust ssCurrentClosure
+                                          , dteCloType        = classify o
+                                          , dteLifetime       = ssClosureExitCount - hoAllocTime
+                                          , dteCyclesSurvived = ssGCCycle - hoAllocCycle
                                           } : ssDynTrace
           , ssClosureExitCount = ssClosureExitCount + 1
           }
@@ -358,8 +359,9 @@ classify Closure {hoCloArgs = supplied, hoCloMissing = missing} =
     (0, 0) -> "thunk"
     (0, _) -> "fun"
     _ -> "pap"
--- TODO: is it possible that some are supplied but none missing?
---       i.e. are PAPs reused as thunks?
+-- Q: is it possible that some are supplied but none missing?
+--    i.e. are PAPs reused as thunks?
+-- A: no, neither here nor in GHC
 classify Con {}                                                 = "con"
 classify BlackHole {}                                           = "blackhole"
 classify _                                                      = "?"
@@ -373,18 +375,6 @@ evalStackContinuation result = \case
   Update dstAddr
     | [src@(HeapPtr addr)] <- result
     -> do
-      tracedPtrs <- gets ssTracedPtrs
-      when (IntSet.member dstAddr tracedPtrs) $ do
-        s@StgState{..} <- get
-        time <- getTime
-        let update = DTEUpdate
-              { dteTimestamp = time
-              , dteThreadId  = ssCurrentThreadId
-              , dteFunction  = fromJust ssCurrentClosure
-              , dteDstAddr   = dstAddr
-              , dteSrcAddr   = addr
-              }
-        put s {ssDynTrace = update : ssDynTrace}
       o <- readHeap src
       store dstAddr o
       pure result
@@ -659,10 +649,29 @@ storeRhs isLetNoEscape localEnv i addr = \case
     store addr (Con isLetNoEscape dc args)
 
   cl@(StgRhsClosure freeVars _ paramNames _) -> do
+    s@StgState{..} <- get
     let liveSet   = Set.fromList $ map Id freeVars
         prunedEnv = Map.restrictKeys localEnv liveSet -- HINT: do pruning to keep only the live/later referred variables
-    StgState{ ssClosureExitCount = c } <- get
-    store addr (Closure isLetNoEscape (Id i) cl prunedEnv [] (length paramNames) c)
+        closure   = Closure
+                    { hoIsLNE      = isLetNoEscape
+                    , hoName       = Id i
+                    , hoCloBody    = cl
+                    , hoEnv        = prunedEnv
+                    , hoCloArgs    = []
+                    , hoCloMissing = length paramNames
+                    , hoAllocTime  = ssClosureExitCount
+                    , hoAllocCycle = ssGCCycle
+                    }
+    time <- getTime
+    let allocation = DTEAlloc
+          { dteTimestamp = time
+          , dteThreadId  = ssCurrentThreadId
+          , dteFunction  = fromJust ssCurrentClosure
+          , dteCloType   = classify closure
+          , dteAddress   = addr
+          }
+    put s {ssDynTrace = allocation : ssDynTrace}
+    store addr closure
 
 -----------------------
 

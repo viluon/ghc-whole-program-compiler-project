@@ -140,7 +140,11 @@ data HeapObject
     , hoEnv         :: Env    -- local environment ; with live variables only, everything else is pruned
     , hoCloArgs     :: [Atom]
     , hoCloMissing  :: Int    -- HINT: this is a Thunk if 0 arg is missing ; if all is missing then Fun ; Pap is some arg is provided
-    , hoAllocTime   :: !Int
+    , hoAllocTime   :: !Int   -- ^ the number of closure exits encountered up to
+                              --   the point of allocation of this closure
+    , hoAllocCycle  :: !Int   -- ^ the GC cycle number (from @StgState@) before which
+                              --   this closure was allocated (GC cycle 0 happens after
+                              --   the allocation of the first closure)
     }
   | BlackHole HeapObject
   | ApStack                   -- HINT: needed for the async exceptions
@@ -230,11 +234,12 @@ tsv = intercalate "\t" . asRow
 
 data DynTraceEntry
   = DTEEntry -- ^ Marks the start of closure evaluation.
-  { dteTimestamp :: !Int
-  , dteThreadId  :: !Int
-  , dteFunction  :: !Id
-  , dteCloType   :: !String
-  , dteLifetime  :: !Int
+  { dteTimestamp      :: !Int
+  , dteThreadId       :: !Int
+  , dteFunction       :: !Id
+  , dteCloType        :: !String
+  , dteLifetime       :: !Int
+  , dteCyclesSurvived :: !Int -- ^ the number of GC cycles the entered closure lived for
   }
   | DTEDiff -- ^ Marks the end of closure evaluation. Carries the diff of the closure's arguments pre- and post-evaluation.
   { dteTimestamp :: !Int
@@ -243,12 +248,12 @@ data DynTraceEntry
   , dteDiff      :: ![String]
   , dteResult    :: !String
   }
-  | DTEUpdate -- ^ Marks an update frame.
+  | DTEAlloc -- ^ Marks the allocation of a closure.
   { dteTimestamp :: !Int
   , dteThreadId  :: !Int
   , dteFunction  :: !Id
-  , dteDstAddr   :: !Int
-  , dteSrcAddr   :: !Int
+  , dteCloType   :: !String
+  , dteAddress   :: !Addr
   }
   deriving (Eq, Ord, Show)
 
@@ -261,6 +266,8 @@ instance Record DynTraceEntry where
     -- for padding the lists
     p = flip take $ repeat ("" :: String)
 
+    -- don't forget to modify `exportDynTrace` in Debug.hs
+    -- if you're touching this
     specific DTEEntry{..} =
       [ "closure entry"
       , dteCloType
@@ -276,14 +283,13 @@ instance Record DynTraceEntry where
       ]
       ++ p 2
       ++ dteDiff
-    specific DTEUpdate{..} =
-      [ "update  frame"
+    specific DTEAlloc{..} =
+      [ "allocation"
+      , dteCloType -- reuse the column for DTEEntry
       , ""
       , ""
       , ""
-      , ""
-      , show dteSrcAddr
-      , show dteDstAddr
+      , show dteAddress
       ]
 
 data TraceFrame = TF
@@ -299,6 +305,7 @@ data StgState
 
   -- GC
   , ssLastGCAddr          :: !Int
+  , ssGCCycle             :: !Int
   , ssGCInput             :: PrintableMVar ([Atom], StgState)
   , ssGCOutput            :: PrintableMVar RefSet
   , ssGCIsRunning         :: Bool
@@ -423,6 +430,7 @@ emptyStgState stateStore dl dbgChan nextDbgCmd dbgState tracingState gcIn gcOut 
 
   -- GC
   , ssLastGCAddr          = 0
+  , ssGCCycle             = 0
   , ssGCInput             = gcIn
   , ssGCOutput            = gcOut
   , ssGCIsRunning         = False

@@ -41,7 +41,9 @@ checkGC localGCRoots = do
 
 
 runGC :: [Atom] -> M ()
-runGC = runGCSync
+runGC roots = do
+  modify' $ \s@StgState{..} -> s {ssGCCycle = ssGCCycle + 1}
+  runGCSync roots
 
 postGCReport :: M ()
 postGCReport = do

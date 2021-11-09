@@ -159,7 +159,6 @@ exportDynTrace = do
         , "lifetime"
         , "arity"
         , "result atoms"
-        , "src address"
-        , "dst address"
+        , "address"
         ] ++ (("arg" ++) . show <$> [1 .. 30])
       traverse_ (hPutStrLn h . tsv) $ reverse trace
