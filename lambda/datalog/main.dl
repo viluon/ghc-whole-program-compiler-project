@@ -32,3 +32,12 @@
 #include "PrimOp-StablePtr.dl"
 #include "PrimOp-TagToEnum.dl"
 #include "PrimOp-WeakPtr.dl"
+
+#include "Escape.dl"
+#include "Escape-CFA.dl"
+#include "Escape-PrimOp-Arrays.dl"
+#include "Escape-PrimOp-MVar.dl"
+#include "Escape-PrimOp-MutVar.dl"
+#include "Escape-PrimOp-WeakPtr.dl"
+#include "Escape-PrimOp-STM.dl"
+#include "Escape-PrimOp-StablePtr.dl"
