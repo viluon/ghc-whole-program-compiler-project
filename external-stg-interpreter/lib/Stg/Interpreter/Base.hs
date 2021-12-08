@@ -8,6 +8,7 @@ import Data.List (foldl', intercalate)
 import Data.Maybe (fromJust)
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Sequence (Seq)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.Map.Strict as StrictMap
@@ -408,7 +409,7 @@ data StgState
   , ssHeapStartAddress    :: !Int
   , ssClosureCallCounter  :: !Int
   -- viluon's edits
-  , ssDynTrace            :: ![DynTraceEntry]
+  , ssDynTrace            :: !(Seq DynTraceEntry)
   , ssTracingStack        :: ![TraceFrame]
   , ssTracedPtrs          :: !IntSet
   , ssClosureExitCount    :: !Int

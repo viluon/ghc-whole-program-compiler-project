@@ -3,6 +3,7 @@ module Stg.Interpreter.Debug where
 
 import qualified GHC.Exts as Exts
 import qualified Data.Set as Set
+import qualified Data.Sequence as Seq
 import qualified Data.IntMap as IntMap
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.ByteString.Internal as BS
@@ -209,4 +210,4 @@ exportDynTrace = do
         , "result atoms"
         , "address"
         ] ++ (("arg" ++) . show <$> [1 .. 30])
-      traverse_ (hPutStrLn h . tsv) $ reverse trace
+      traverse_ (hPutStrLn h . tsv) $ Seq.reverse trace

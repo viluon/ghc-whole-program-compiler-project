@@ -17,6 +17,7 @@ import qualified Data.Primitive.ByteArray as BA
 import Data.List (isSuffixOf, partition, intercalate)
 import Data.Maybe
 import Data.Set (Set)
+import Data.Sequence ((|>), ViewL(..), ViewR(..), (<|), (><), Seq)
 import Data.Map (Map)
 import qualified Data.Map.Strict as StrictMap
 import qualified Data.Map as Map
@@ -211,7 +212,7 @@ builtinStgEval so a@HeapPtr{} = do
                                           , dteCloType        = classify o
                                           , dteLifetime       = ssClosureExitCount - hoAllocTime
                                           , dteCyclesSurvived = ssGCCycle - hoAllocCycle
-                                          } : ssDynTrace
+                                          } <| ssDynTrace
           , ssClosureExitCount = ssClosureExitCount + 1
           }
 
@@ -498,7 +499,7 @@ evalStackContinuation result = \case
 
     -- do the poppery and the loggery
     modify' $ \s@StgState{..} -> s
-      { ssTracingStack = stack, ssDynTrace = entry : ssDynTrace }
+      { ssTracingStack = stack, ssDynTrace = entry <| ssDynTrace }
     pure result
 
   DebugFrame df -> evalDebugFrame result df
@@ -718,7 +719,7 @@ storeRhs isLetNoEscape localEnv i addr = \case
           , dteCloType   = classify closure
           , dteAddress   = addr
           }
-    put s {ssDynTrace = allocation : ssDynTrace}
+    put s {ssDynTrace = allocation <| ssDynTrace}
     store addr closure
 
 -----------------------
