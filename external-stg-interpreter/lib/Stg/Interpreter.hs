@@ -12,6 +12,7 @@ import Control.Concurrent.MVar
 import qualified Control.Concurrent.Chan.Unagi.Bounded as Unagi
 import Control.Monad.State.Strict
 import Control.Exception
+import Control.DeepSeq (force)
 import qualified Data.Primitive.ByteArray as BA
 
 import Data.List (isSuffixOf, partition, intercalate)
@@ -206,13 +207,14 @@ builtinStgEval so a@HeapPtr{} = do
         modify' $ \s@StgState{..} -> s
           { ssTracingStack     = TF hoName (unptr <$> hoCloArgs) args : ssTracingStack
           , ssTracedPtrs       = foldr IntSet.insert ssTracedPtrs ptrs
-          , ssDynTrace         = DTEEntry { dteTimestamp      = time
-                                          , dteThreadId       = ssCurrentThreadId
-                                          , dteFunction       = show $ fromJust ssCurrentClosure
-                                          , dteCloType        = classify o
-                                          , dteLifetime       = ssClosureExitCount - hoAllocTime
-                                          , dteCyclesSurvived = ssGCCycle - hoAllocCycle
-                                          } <| ssDynTrace
+          , ssDynTrace         = force DTEEntry
+                                    { dteTimestamp      = time
+                                    , dteThreadId       = ssCurrentThreadId
+                                    , dteFunction       = show $ fromJust ssCurrentClosure
+                                    , dteCloType        = classify o
+                                    , dteLifetime       = ssClosureExitCount - hoAllocTime
+                                    , dteCyclesSurvived = ssGCCycle - hoAllocCycle
+                                    } <| ssDynTrace
           , ssClosureExitCount = ssClosureExitCount + 1
           }
 
@@ -499,7 +501,7 @@ evalStackContinuation result = \case
 
     -- do the poppery and the loggery
     modify' $ \s@StgState{..} -> s
-      { ssTracingStack = stack, ssDynTrace = entry <| ssDynTrace }
+      { ssTracingStack = stack, ssDynTrace = force entry <| ssDynTrace }
     pure result
 
   DebugFrame df -> evalDebugFrame result df
@@ -719,7 +721,7 @@ storeRhs isLetNoEscape localEnv i addr = \case
           , dteCloType   = classify closure
           , dteAddress   = addr
           }
-    put s {ssDynTrace = allocation <| ssDynTrace}
+    put s {ssDynTrace = force allocation <| ssDynTrace}
     store addr closure
 
 -----------------------

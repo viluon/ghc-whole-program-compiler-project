@@ -70,6 +70,7 @@ library
                        unix,
                        filepath,
                        directory,
+                       deepseq,
                        libffi,
                        text,
                        bytestring,

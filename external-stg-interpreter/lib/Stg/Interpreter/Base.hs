@@ -1,9 +1,11 @@
-{-# LANGUAGE RecordWildCards, LambdaCase, OverloadedStrings, ExistentialQuantification #-}
+{-# LANGUAGE RecordWildCards, LambdaCase, OverloadedStrings, ExistentialQuantification, DeriveGeneric #-}
 module Stg.Interpreter.Base where
 
 import Data.Word
 import Foreign.Ptr
+import GHC.Generics (Generic)
 import Control.Monad.State.Strict
+import Control.DeepSeq (NFData)
 import Data.List (foldl', intercalate)
 import Data.Maybe (fromJust)
 import Data.Set (Set)
@@ -281,7 +283,9 @@ data DynTraceEntry
   , dteCloType   :: !String
   , dteAddress   :: !Addr
   }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData DynTraceEntry
 
 instance Record DynTraceEntry where
   asRow entry =
