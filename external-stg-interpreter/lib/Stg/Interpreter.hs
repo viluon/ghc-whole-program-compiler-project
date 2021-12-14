@@ -18,8 +18,9 @@ import qualified Data.Primitive.ByteArray as BA
 import Data.List (isSuffixOf, partition, intercalate)
 import Data.Maybe
 import Data.Set (Set)
-import Data.Sequence ((|>), ViewL(..), ViewR(..), (<|), (><), Seq)
+import Data.Sequence ((|>), ViewL(..), ViewR(..), (<|), (><), Seq, fromList)
 import Data.Map (Map)
+import Data.Text (Text, pack, unpack)
 import qualified Data.Map.Strict as StrictMap
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -210,8 +211,8 @@ builtinStgEval so a@HeapPtr{} = do
           , ssDynTrace         = force DTEEntry
                                     { dteTimestamp      = time
                                     , dteThreadId       = ssCurrentThreadId
-                                    , dteFunction       = show $ fromJust ssCurrentClosure
-                                    , dteCloType        = classify o
+                                    , dteFunction       = pack $ show $ fromJust ssCurrentClosure
+                                    , dteCloType        = pack $ classify o
                                     , dteLifetime       = ssClosureExitCount - hoAllocTime
                                     , dteCyclesSurvived = ssGCCycle - hoAllocCycle
                                     } <| ssDynTrace
@@ -494,9 +495,9 @@ evalStackContinuation result = \case
     let entry = DTEDiff
           { dteTimestamp = time
           , dteThreadId  = threadId
-          , dteFunction  = show tfName
-          , dteDiff      = diff
-          , dteResult    = "[" ++ res ++ "]"
+          , dteFunction  = pack  $  show tfName
+          , dteDiff      = pack <$> fromList diff
+          , dteResult    = pack  $  "[" ++ res ++ "]"
           }
 
     -- do the poppery and the loggery
@@ -717,8 +718,8 @@ storeRhs isLetNoEscape localEnv i addr = \case
           { dteTimestamp = time
           , dteThreadId  = -1 -- FIXME: storeRhs is sometimes called when
                               -- ssCurrentThreadId hasn't been initialised yet
-          , dteFunction  = maybe "" show ssCurrentClosure
-          , dteCloType   = classify closure
+          , dteFunction  = pack $ maybe "" show ssCurrentClosure
+          , dteCloType   = pack $ classify closure
           , dteAddress   = addr
           }
     put s {ssDynTrace = force allocation <| ssDynTrace}

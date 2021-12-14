@@ -35,8 +35,10 @@ import System.IO
 
 import GHC.Stack
 import Text.Printf
+import Data.Text (Text, pack, unpack)
 import Debug.Trace
 import Stg.Syntax
+import Data.Foldable (Foldable(toList))
 
 type StgRhsClosure = Rhs  -- NOTE: must be StgRhsClosure only!
 
@@ -264,23 +266,23 @@ data DynTraceEntry
   = DTEEntry -- ^ Marks the start of closure evaluation.
   { dteTimestamp      :: !Int
   , dteThreadId       :: !Int
-  , dteFunction       :: !String
-  , dteCloType        :: !String
+  , dteFunction       :: !Text
+  , dteCloType        :: !Text
   , dteLifetime       :: !Int
   , dteCyclesSurvived :: !Int -- ^ the number of GC cycles the entered closure lived for
   }
   | DTEDiff -- ^ Marks the end of closure evaluation. Carries the diff of the closure's arguments pre- and post-evaluation.
   { dteTimestamp :: !Int
   , dteThreadId  :: !Int
-  , dteFunction  :: !String
-  , dteDiff      :: ![String]
-  , dteResult    :: !String
+  , dteFunction  :: !Text
+  , dteDiff      :: !(Seq Text)
+  , dteResult    :: !Text
   }
   | DTEAlloc -- ^ Marks the allocation of a closure.
   { dteTimestamp :: !Int
   , dteThreadId  :: !Int
-  , dteFunction  :: !String
-  , dteCloType   :: !String
+  , dteFunction  :: !Text
+  , dteCloType   :: !Text
   , dteAddress   :: !Addr
   }
   deriving (Eq, Ord, Show, Generic)
@@ -289,7 +291,7 @@ instance NFData DynTraceEntry
 
 instance Record DynTraceEntry where
   asRow entry =
-    (($ entry) <$> [show . dteTimestamp, show . dteThreadId, dteFunction])
+    (($ entry) <$> [show . dteTimestamp, show . dteThreadId, unpack . dteFunction])
       ++ specific entry
 
     where
@@ -300,7 +302,7 @@ instance Record DynTraceEntry where
     -- if you're touching this
     specific DTEEntry{..} =
       [ "closure entry"
-      , dteCloType
+      , unpack dteCloType
       , show dteLifetime
       ]
       ++ p 4
@@ -309,13 +311,13 @@ instance Record DynTraceEntry where
       , ""
       , ""
       , show $ length dteDiff
-      , dteResult
+      , unpack dteResult
       ]
       ++ p 2
-      ++ dteDiff
+      ++ (unpack <$> toList dteDiff)
     specific DTEAlloc{..} =
       [ "allocation"
-      , dteCloType -- reuse the column for DTEEntry
+      , unpack dteCloType -- reuse the column for DTEEntry
       , ""
       , ""
       , ""
