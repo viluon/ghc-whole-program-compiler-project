@@ -301,27 +301,27 @@ instance Record DynTraceEntry where
     -- don't forget to modify `exportDynTrace` in Debug.hs
     -- if you're touching this
     specific DTEEntry{..} =
-      [ "closure entry"
-      , unpack dteCloType
-      , show dteLifetime
+      [ "closure entry"              -- type
+      , unpack dteCloType            -- closure type
+      , show dteLifetime             -- lifetime
       ]
-      ++ p 4
+      ++ p 3                         -- arity, result atoms, address
     specific DTEDiff{..} =
-      [ "argument diff"
-      , ""
-      , ""
-      , show $ length dteDiff
-      , unpack dteResult
+      [ "argument diff"              -- type
+      , ""                           -- closure type
+      , ""                           -- lifetime
+      , show $ length dteDiff        -- arity
+      , unpack dteResult             -- result atoms
       ]
-      ++ p 2
-      ++ (unpack <$> toList dteDiff)
+      ++ p 1                         -- address
+      ++ (unpack <$> toList dteDiff) -- arg1, arg2, ...
     specific DTEAlloc{..} =
-      [ "allocation"
-      , unpack dteCloType -- reuse the column for DTEEntry
-      , ""
-      , ""
-      , ""
-      , show dteAddress
+      [ "allocation"                 -- type
+      , unpack dteCloType            -- reuse the column for DTEEntry
+      , ""                           -- lifetime
+      , ""                           -- arity
+      , ""                           -- result atoms
+      , show dteAddress              -- address
       ]
 
 data TraceFrame = TF
