@@ -66,23 +66,25 @@ library
   hs-source-dirs:      lib
   ghc-options:         -Wall -fobject-code -O2
   build-depends:       base,
-                       time,
-                       unix,
-                       filepath,
-                       directory,
-                       deepseq,
-                       libffi,
-                       text,
+                       base64,
                        bytestring,
                        containers,
-                       primitive,
-                       vector,
-                       mtl,
+                       deepseq,
+                       directory,
+                       external-stg,
+                       filepath,
+                       hashable,
                        inline-c,
-                       unagi-chan,
+                       libffi,
+                       mtl,
                        pretty-terminal,
+                       primitive,
                        souffle-haskell,
-                       external-stg
+                       text,
+                       time,
+                       unagi-chan,
+                       unix,
+                       vector,
   default-language:    Haskell2010
 
   include-dirs:         datalog

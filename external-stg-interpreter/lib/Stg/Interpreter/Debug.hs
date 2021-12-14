@@ -18,6 +18,9 @@ import Text.Printf
 
 import Control.Monad.State.Strict
 
+import Data.Hashable (hash)
+import Data.Text (pack, unpack)
+import Data.Text.Encoding.Base64 (encodeBase64)
 import Data.List (intercalate, maximumBy)
 import Data.Foldable (traverse_)
 import Data.Function (on)
@@ -193,10 +196,12 @@ writeCallGraphSummary fname CallGraph{..} = do
 -- TODO: should really be called from all the places exportCallGraph is
 exportDynTrace :: M ()
 exportDynTrace = do
-  Rts { rtsProgName = progName } <- gets ssRtsSupport
+  Rts { rtsProgName = progName, rtsProgArgs = progArgs } <- gets ssRtsSupport
   trace <- gets ssDynTrace
   liftIO $ do
-    withFile (progName ++ "-dyn-trace.tsv") WriteMode $ \h -> do
+    withFile (progName
+      ++ '-' : (unpack . encodeBase64 . pack . show . hash $ progArgs)
+      ++ "-dyn-trace.tsv") WriteMode $ \h -> do
       -- let arity = length . join (\case DTEDiff {} -> dteDiff; _ -> const [])
       -- let maxArity = arity $ maximumBy (compare `on` arity) trace
       hPutStrLn h $ intercalate "\t" $
