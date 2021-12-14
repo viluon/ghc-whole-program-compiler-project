@@ -205,7 +205,8 @@ exportDynTrace = do
       -- let arity = length . join (\case DTEDiff {} -> dteDiff; _ -> const [])
       -- let maxArity = arity $ maximumBy (compare `on` arity) trace
       hPutStrLn h $ intercalate "\t" $
-        [ "timestamp"
+        [ "program and arguments"
+        , "timestamp"
         , "thread id"
         , "function"
         , "type"
@@ -215,4 +216,4 @@ exportDynTrace = do
         , "result atoms"
         , "address"
         ] ++ (("arg" ++) . show <$> [1 .. 30])
-      traverse_ (hPutStrLn h . tsv) $ Seq.reverse trace
+      traverse_ (hPutStrLn h . ((progName ++ ' ' : unwords progArgs) ++) . tsv) $ Seq.reverse trace
